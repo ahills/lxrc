@@ -1,0 +1,296 @@
+#!/usr/bin/env python2
+
+import sys, os, re, shlex, subprocess
+
+### Commands
+
+def msg(msg):
+    if variables['verbose']:
+        print msg
+
+def dbg(msg):
+    if variables['debug']:
+        print msg
+
+def require(name, keys, kwargs):
+    for key in keys:
+        if key not in kwargs:
+            raise Exception("{name} missing {key}".format(name=name, key=key))
+
+def shell(cmd):
+    dbg("$ {cmd}".format(cmd=cmd))
+    ret = os.system(cmd)
+    if ret:
+        raise Exception("command returned {ret}".format(ret=ret))
+
+def list_or_default(args):
+    targets = list(args)
+    if not targets:
+        if '_' in variables:
+            dbg("Using default target: '{target}'".format(target=variables['_']))
+            targets.append(variables['_'])
+    return targets
+
+def prompt(msg, options, default=None):
+    optstring = ' / '.join(['[' + opt[1] + ']' if opt[0] == default else opt[1] for opt in options])
+    opts = [opt[0] for opt in options]
+    response = None
+    while not response:
+        print msg, optstring,
+        response = raw_input().lower()
+        if not response:
+            response = default
+        if response not in opts:
+            response = None
+    return response
+
+def cmd_echo(*args):
+    print ' '.join(args)
+
+def cmd_exec(*args):
+    msg("Executing '{cmd}'".format(cmd=' '.join(args)))
+    try:
+        variables['stdout'] = subprocess.check_output(cmd, shell=True)
+    except subprocess.CalledProcessError, err:
+        raise Exception("command returned {returncode}; output:\n{output}".format(**err.__dict__),
+                err.returncode)
+    except OSError, err:
+        raise Exception("could not execute command: {err}".format(err=err))
+
+def cmd_include(*args):
+    if not args:
+        raise Exception("include what?")
+    for arg in args:
+        path = None
+        if os.path.isfile(arg):
+            path = arg
+        elif variables['path']: # Search path
+            for loc in variables['path'].split(':'):
+                newpath = os.path.join(loc, arg)
+                dbg("Searching '{newpath}'".format(newpath=newpath))
+                if os.path.isfile(newpath):
+                    path = newpath
+                    break
+        if not path:
+            raise Exception("failed to find '{arg}'".format(arg=arg))
+        msg("Transferring control to '{path}'", path=path)
+        ret = run(get_lexer(*get_stream(arg)))
+        if ret:
+            raise Exception("failed including '{path}'".format(path=path))
+        msg("Returning control from '{path}'", path=path)
+
+def cmd_info(*args):
+    targets = list_or_default(args)
+    if not targets:
+        raise Exception("no targets to query")
+    for target in targets:
+        msg("Querying '{target}'".format(target=target))
+        shell("lxc-info -n '{target}'".format(target=target))
+
+def cmd_luksclose(**kwargs):
+    require('luksclose', ('name',), kwargs)
+    cmdargs = {
+            'cryptsetup': variables['cryptsetup'],
+            'name': kwargs['name']
+            }
+    msg("Closing encrypted device '{name}'".format(**cmdargs))
+    shell("{cryptsetup} luksClose '{name}'".format(**cmdargs))
+
+def cmd_luksopen(**kwargs):
+    require('luksopen', ('dev', 'name'), kwargs)
+    cmdargs = {
+            'cryptsetup': variables['cryptsetup'],
+            'dev': kwargs['dev'],
+            'name': kwargs['name'],
+            }
+    if os.path.exists(os.path.join('/dev/mapper', cmdargs['name'])):
+        action = prompt("A mapped device already has the name '{name}'.".format(**cmdargs),
+            (('s', '(s)kip'), ('c', '(c)lose'), ('a', '(a)bort')), default='a')
+        if action == 'a':
+            raise Exception("luks open abort requested for '{name}'".format(**cmdargs))
+        if action == 's':
+            return
+        if action == 'c':
+            cmd_luksclose(name=cmdargs['name'])
+    msg("Opening encrypted device '{dev}' as '{name}'".format(**cmdargs))
+    shell("{cryptsetup} luksOpen '{dev}' '{name}'".format(**cmdargs))
+    rollback.append((cmd_luksclose, (), {'name': cmdargs['name']}))
+    # Pass mount through
+    if 'dst' in kwargs:
+        cmd_mount(dev='/dev/mapper/%s' % kwargs['name'], dst=kwargs['dst'])
+
+def cmd_mount(**kwargs):
+    require('mount', ('dev', 'dst'), kwargs)
+    cmdargs = {
+            'mount': variables['mount'],
+            'dev': kwargs['dev'],
+            }
+    if variables['_']:
+        cmdargs['dst'] = os.path.join(variables['lxcpath'], variables['_'], 'rootfs', kwargs['dst'])
+    else:
+        cmdargs['dst'] = kwargs['dst']
+    if 'opt' in kwargs:
+        cmdargs['opt'] = kwargs['opt']
+    elif 'mount_opt' in variables:
+        cmdargs['opt'] = variables['mount_opt']
+        dbg("Inherit opt from mount_opt: '{opt}'".format(opt=cmdargs['opt']))
+    if 'opt' in cmdargs:
+        msg("Mounting device '{dev}' on '{dst}' with options '{opt}'".format(**cmdargs))
+        shell("{mount} -o '{opt}' '{dev}' '{dst}'".format(**cmdargs))
+    else:
+        msg("Mounting device '{dev}' on '{dst}'".format(**cmdargs))
+        shell("{mount} '{dev}' '{dst}'".format(**cmdargs))
+    rollback.append((cmd_unmount, (), {'dev': cmdargs['dev']}))
+
+def cmd_start(*args):
+    targets = list_or_default(args)
+    if not targets:
+        raise Exception("no targets to start")
+    for target in targets:
+        msg("Starting '{target}'".format(target=target))
+        shell("lxc-start --logfile /dev/stderr -n '{target}'".format(target=target))
+
+def cmd_unmount(**kwargs):
+    cmdargs = {
+            'umount': variables['umount'],
+            }
+    if 'dev' in kwargs:
+        cmdargs['target'] = kwargs['dev']
+        msg("Unmounting device '{target}'".format(**cmdargs))
+    elif 'dst' in kwargs:
+        cmdargs['target'] = kwargs['dst']
+        msg("Unmounting destination '{target}'".format(**cmdargs))
+    else:
+        raise Exception("unmount needs dev or dst")
+    shell("{umount} {target}".format(**cmdargs))
+
+commands = {
+        'echo': cmd_echo,
+        'exec': cmd_exec,
+        'include': cmd_include,
+        'info': cmd_info,
+        'luksclose': cmd_luksclose,
+        'luksopen': cmd_luksopen,
+        'mount': cmd_mount,
+        'start': cmd_start,
+        'unmount': cmd_unmount,
+        }
+
+
+### Variables
+
+variables = {
+        'cryptsetup': os.getenv('CRYPTSETUP', 'cryptsetup'),
+        'debug': None,
+        'echo': None,
+        'lxcpath': os.getenv('LXCPATH', '/var/lib/lxc'),
+        'mount': os.getenv('MOUNT', 'mount'),
+        'mount_opt': None,
+        'path': '/etc/lxrc.d:.',
+        'rollback': None,
+        'umount': os.getenv('UMOUNT', 'umount'),
+        'verbose': None,
+        }
+
+
+### Rollback stack
+
+rollback = []
+
+### Setup
+
+def get_stream(path):
+    if path == '-':
+        variables['_'] = None
+        return sys.stdin, None
+    variables['_'] = os.path.basename(path)
+    return file(path), path
+
+def get_lexer(stream, path):
+    lex = shlex.shlex(stream, path or '<stdin>', posix=True)
+    lex.quotes = ''
+    lex.whitespace = '\n'
+    lex.whitespace_split = True
+    return lex
+
+def get_linelexer(line):
+    lex = shlex.shlex(line, posix=True)
+    lex.wordchars += '/={}'
+    return lex
+
+
+### Run
+
+def run(lex, argv):
+    def subst(string):
+        try:
+            return string.format(*argv, **variables)
+        except IndexError:
+            raise Exception("missing argument")
+        except KeyError, err:
+            raise Exception("no such variable " + str(err))
+
+    try:
+        for rawline in lex:
+            if variables['echo']:
+                print '>', rawline
+            line = get_linelexer(rawline)
+            left = line.get_token()
+            mid = line.get_token()
+            if mid == '=': # Set variable
+                value = line.get_token()
+                if line.get_token():
+                    raise Exception("junk after assignment of '%s'" % left)
+                variables[left] = subst(value) if value else None
+            else: # Command/args
+                if left not in commands:
+                    raise Exception("no such command '%s'" % left)
+                if mid: # Push the thing that wasn't = back on
+                    line.push_token(mid)
+                args = []
+                kwargs = {}
+                for arg in list(line):
+                    try:
+                        key, val = subst(arg).split('=', 1)
+                        kwargs[key] = val
+                    except ValueError:
+                        args.append(subst(arg))
+                commands[left](*args, **kwargs)
+    except Exception, err:
+        print >>sys.stderr, "error: {loc}{msg}".format(
+                loc=lex.error_leader(lex.infile, lex.lineno - 1), msg=str(err))
+        return 1
+    return 0
+
+if __name__ == '__main__':
+    targets = []
+    args = []
+    argswitch = False
+    for path in sys.argv[1:]:
+        if argswitch:
+            args.append(path)
+        else:
+            if path == '--':
+                argswitch = True
+            else:
+                targets.append(path)
+    for target in targets:
+        ret = run(get_lexer(*get_stream(target)), [target] + args)
+        if ret:
+            if variables['rollback']:
+                msg("Rolling back {0} actions".format(len(rollback)))
+                while rollback:
+                    action = rollback.pop()
+                    argstr = ','.join(action[1])
+                    if argstr:
+                        argstr += ','
+                    argstr += ','.join(["{key}={val}".format(key=key, val=val)
+                            for key, val in action[2].iteritems()])
+                    callstr = "{cmd}({args})".format(cmd=action[0].__name__, args=argstr)
+                    try:
+                        dbg("Attempting rollback: '{}'".format(callstr))
+                        action[0](*action[1], **action[2])
+                    except Exception, err:
+                        print >>sys.stderr, "error: rollback failed for '{})'".format(callstr)
+            sys.exit(ret)
+
