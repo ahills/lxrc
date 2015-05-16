@@ -129,9 +129,9 @@ def cmd_mount(**kwargs):
         cmdargs['dst'] = os.path.join(variables['lxcpath'], variables['_'], 'rootfs', kwargs['dst'])
     else:
         cmdargs['dst'] = kwargs['dst']
-    if 'opt' in kwargs:
+    if 'opt' in kwargs and kwargs['opt']:
         cmdargs['opt'] = kwargs['opt']
-    elif 'mount_opt' in variables:
+    elif 'mount_opt' in variables and variables['mount_opt']:
         cmdargs['opt'] = variables['mount_opt']
         dbg("Inherit opt from mount_opt: '{opt}'".format(opt=cmdargs['opt']))
     if 'opt' in cmdargs:
