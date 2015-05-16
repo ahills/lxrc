@@ -73,11 +73,11 @@ def cmd_include(*args):
                     break
         if not path:
             raise Exception("failed to find '{arg}'".format(arg=arg))
-        msg("Transferring control to '{path}'", path=path)
+        msg("Transferring control to '{path}'".format(path=path))
         ret = run(get_lexer(*get_stream(arg)))
         if ret:
             raise Exception("failed including '{path}'".format(path=path))
-        msg("Returning control from '{path}'", path=path)
+        msg("Returning control from '{path}'".format(path=path))
 
 def cmd_info(*args):
     targets = list_or_default(args)
