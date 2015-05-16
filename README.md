@@ -1,7 +1,7 @@
 # lxrc
 
 Wrapper around LXC commands. Create a file with the name of the container to
-wrap, and put the path to `lxrc` on the shebang line.
+wrap, and put the path to *lxrc* on the shebang line.
 
 Here's an example that mounts some LVM filesystems, one of them encrypted:
 
@@ -36,6 +36,21 @@ echo
 echo '*** Done with {_} ***'
 echo
 
+```
+
+## Installation
+
+Either copy the *lxrc* file somewhere, or use the included Makefile, which will
+install to `/usr/local/bin/lxrc` by default:
+
+```
+make
+```
+
+Or to, e.g., `/opt/lxrc/bin/lxrc`:
+
+```
+make PREFIX=/opt/lxrc
 ```
 
 ## Variable Reference
