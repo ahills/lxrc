@@ -44,13 +44,13 @@ Either copy the *lxrc* file somewhere, or use the included Makefile, which will
 install to `/usr/local/bin/lxrc` by default:
 
 ```
-make
+make install
 ```
 
 Or to, e.g., `/opt/lxrc/bin/lxrc`:
 
 ```
-make PREFIX=/opt/lxrc
+make PREFIX=/opt/lxrc install
 ```
 
 ## Variable Reference

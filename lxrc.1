@@ -1,0 +1,25 @@
+.TH LXRC 1 lxrc
+.SH NAME
+lxrc \- LXC command wrapper
+.SH SYNOPSIS
+.BR lxrc
+.RB [ SCRIPT... ]
+.SH DESCRIPTION
+.B lxrc
+is a wrapper around the LXC commands to start a container. Its primary
+usefulness is preparing mounts and LUKS devices.
+.SH OPTIONS
+Each argument is a path to a script to process, or - for \fIstdin\fR. If no
+arguments are given, \fIstdin\fR is read. Note that the basename of the script
+is used to determine the value of the default variable (see below), so be sure
+to set it for \fIstdin\fR and files which basename does not match the LXC
+container name exactly.
+
+See the included README for examples, commands, and variables.
+.SH AUTHORS
+Andrew Hills <ahills@ednos.net>
+.SH LICENSE
+See the LICENSE file for the terms of redistribution.
+.SH BUGS
+Please report them.
+
